@@ -1,35 +1,37 @@
 #include <windows.h>
 #include <wingdi.h>
 
+#include "defines.h"
+
 #define GAME_NAME "YARP"
 #define GAME_RES_WIDTH 384
 #define GAME_RES_HEIGHT 240
 #define GAME_BPP 32
 #define GAME_DRAWING_AREA_MEM_SIZE (GAME_RES_WIDTH * GAME_RES_HEIGHT * (GAME_BPP/8))
 
-LRESULT CALLBACK main_window_proc(_In_ HWND window, _In_ UINT msg, _In_ WPARAM w_param, _In_ LPARAM l_param);
-DWORD create_main_game_window(_Out_ HWND *window, _In_ HINSTANCE inst);
+LRESULT CALLBACK main_window_proc(HWND window, UINT msg, WPARAM w_param, LPARAM l_param);
+u32 create_main_game_window(_Out_ HWND *window,  HINSTANCE inst);
 BOOL instance_already_running(void);
 void ProcessPlayerInput(HWND window);
 void RenderFrame(HWND window);
-DWORD get_monitor_resolution(int *monitor_width, int *monitor_height, HWND window);
+u32 get_monitor_resolution(i32 *monitor_width, i32 *monitor_height, HWND window);
 
 typedef struct Game_Bitmap {
     BITMAPINFO bitmap_info;
-    BYTE buf[GAME_DRAWING_AREA_MEM_SIZE];
+    u8 buf[GAME_DRAWING_AREA_MEM_SIZE];
 } Game_Bitmap;
 
 typedef struct Pixel32 {
-    BYTE blue;
-    BYTE green;
-    BYTE red;
-    BYTE alpha;
+    u8 blue;
+    u8 green;
+    u8 red;
+    u8 alpha;
 } Pixel32;
 
 BOOL game_running = FALSE;
 Game_Bitmap back_buffer;
 
-int WinMain(HINSTANCE inst, HINSTANCE prev_inst, PSTR cmd_line, INT cmd_show) {
+i32 WinMain(HINSTANCE inst, HINSTANCE prev_inst, PSTR cmd_line, INT cmd_show) {
     if (instance_already_running()) { 
         MessageBoxA(NULL, "Another instance of this program is already running!", "Error", MB_ICONEXCLAMATION | MB_OK);
         return 0;
@@ -41,7 +43,7 @@ int WinMain(HINSTANCE inst, HINSTANCE prev_inst, PSTR cmd_line, INT cmd_show) {
         return 0;
     }
 
-    int monitor_width, monitor_height;
+    i32 monitor_width, monitor_height;
     if (get_monitor_resolution(&monitor_width, &monitor_height, window)) {
         MessageBoxA(NULL, "Could not figure out monitor resolution!", "Error", MB_ICONEXCLAMATION | MB_OK);
         return 0;
@@ -81,7 +83,7 @@ LRESULT CALLBACK main_window_proc(HWND window, UINT msg, WPARAM w_param, LPARAM 
     return 0; 
 } 
 
-DWORD create_main_game_window(_Out_ HWND *window, _In_ HINSTANCE inst) {
+u32 create_main_game_window(HWND *window, HINSTANCE inst) {
     WNDCLASSEXA window_class = {
         .cbSize = sizeof(WNDCLASSEXA),
         .style = 0,
@@ -123,7 +125,7 @@ void RenderFrame(HWND window) {
     ReleaseDC(window, device_context);
 }
 
-DWORD get_monitor_resolution(int *monitor_width, int *monitor_height, HWND window) {
+u32 get_monitor_resolution(i32 *monitor_width, i32 *monitor_height, HWND window) {
     MONITORINFO monitor_info = {sizeof(MONITORINFO)};
     if (!GetMonitorInfoA(MonitorFromWindow(window, MONITOR_DEFAULTTOPRIMARY), &monitor_info)) return ERROR_MONITOR_NO_DESCRIPTOR;
 
