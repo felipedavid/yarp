@@ -1,5 +1,4 @@
 #include <windows.h>
-#include <wingdi.h>
 
 #include "defines.h"
 
@@ -14,21 +13,16 @@ typedef struct Game_Bitmap {
     u8 buf[GAME_DRAWING_AREA_MEM_SIZE];
 } Game_Bitmap;
 
-typedef struct Pixel32 {
-    u8 blue;
-    u8 green;
-    u8 red;
-    u8 alpha;
-} Pixel32;
+typedef u32 Pixel32; 
 
 typedef struct Monitor {
-    u32 top;
-    u32 left;
-    u32 right;
-    u32 bottom;
+    i32 top;
+    i32 left;
+    i32 right;
+    i32 bottom;
 
-    u32 width;
-    u32 height;
+    i32 width;
+    i32 height;
 
     MONITORINFO monitor_info;
 } Monitor;
@@ -36,8 +30,8 @@ typedef struct Monitor {
 LRESULT CALLBACK main_window_proc(HWND window, UINT msg, WPARAM w_param, LPARAM l_param);
 u32 create_main_game_window(_Out_ HWND *window,  HINSTANCE inst);
 BOOL instance_already_running(void);
-void ProcessPlayerInput(HWND window);
-void RenderFrame(HWND window);
+void process_player_input(HWND window);
+void render_frame(HWND window, Monitor monitor);
 u32 get_monitor_info(Monitor *monitor, HWND window);
 u32 resize_main_game_window(HWND window, Monitor monitor);
 
@@ -75,14 +69,13 @@ i32 WinMain(HINSTANCE inst, HINSTANCE prev_inst, PSTR cmd_line, INT cmd_show) {
         .biCompression = BI_RGB,
         .biPlanes = 1,
     };
-    memset(back_buffer.buf, 255, sizeof(back_buffer.buf));
     
     game_running = TRUE;
     MSG msg;
     while (game_running) {
         while (PeekMessageA(&msg, window, 0, 0, PM_REMOVE)) DispatchMessage(&msg);
-        ProcessPlayerInput(window);
-        RenderFrame(window);
+        process_player_input(window);
+        render_frame(window, monitor);
         Sleep(1);
     }
 
@@ -120,7 +113,7 @@ u32 create_main_game_window(HWND *window, HINSTANCE inst) {
     if (!RegisterClassExA(&window_class)) return GetLastError();
 
     *window = CreateWindowExA(WS_EX_CLIENTEDGE, window_class.lpszClassName, GAME_NAME, (WS_OVERLAPPEDWINDOW | WS_VISIBLE), 
-        CW_USEDEFAULT, CW_USEDEFAULT, 640, 480, NULL, NULL, inst, NULL);
+			CW_USEDEFAULT, CW_USEDEFAULT, 640, 480, NULL, NULL, inst, NULL);
     if (!*window) return GetLastError();
 
     return ERROR_SUCCESS;
@@ -132,16 +125,22 @@ BOOL instance_already_running(void) {
     return GetLastError() == ERROR_ALREADY_EXISTS;
 }
 
-void ProcessPlayerInput(HWND window) {
+void process_player_input(HWND window) {
     if (GetAsyncKeyState(VK_ESCAPE)) {
         SendMessageA(window, WM_CLOSE, 0, 0);
     }
 }
 
-void RenderFrame(HWND window) {
+void render_frame(HWND window, Monitor monitor) {
+	Pixel32 color = 0xff;
+	for (int i = 0; i < GAME_DRAWING_AREA_MEM_SIZE; i += 4) {
+		*(u32*)(back_buffer.buf+i) = color;
+	}
+
     HDC device_context = GetDC(window);
 
-    StretchDIBits(device_context, 0, 0, 100, 100, 0, 0, 100, 100, back_buffer.buf, &back_buffer.bitmap_info, DIB_RGB_COLORS, SRCCOPY);
+    StretchDIBits(device_context, 0, 0, monitor.width, monitor.height, 0, 0, GAME_RES_WIDTH, 
+		GAME_RES_HEIGHT, back_buffer.buf, &back_buffer.bitmap_info, DIB_RGB_COLORS, SRCCOPY);
 
     ReleaseDC(window, device_context);
 }
@@ -165,7 +164,7 @@ u32 resize_main_game_window(HWND window, Monitor monitor) {
     if (!SetWindowLongPtrA(window, GWL_STYLE, ((WS_OVERLAPPEDWINDOW | WS_VISIBLE) & ~WS_OVERLAPPEDWINDOW)))
         return GetLastError();        
 
-    if (!SetWindowPos(window, HWND_TOPMOST, monitor.left, monitor.top, monitor.width, monitor.height, SWP_FRAMECHANGED))
+    if (!SetWindowPos(window, HWND_TOP, monitor.left, monitor.top, monitor.width, monitor.height, SWP_FRAMECHANGED))
         return GetLastError();
 
     return ERROR_SUCCESS;
