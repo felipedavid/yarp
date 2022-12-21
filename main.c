@@ -9,13 +9,6 @@
 #define GAME_BPP 32
 #define GAME_DRAWING_AREA_MEM_SIZE (GAME_RES_WIDTH * GAME_RES_HEIGHT * (GAME_BPP/8))
 
-LRESULT CALLBACK main_window_proc(HWND window, UINT msg, WPARAM w_param, LPARAM l_param);
-u32 create_main_game_window(_Out_ HWND *window,  HINSTANCE inst);
-BOOL instance_already_running(void);
-void ProcessPlayerInput(HWND window);
-void RenderFrame(HWND window);
-u32 get_monitor_resolution(i32 *monitor_width, i32 *monitor_height, HWND window);
-
 typedef struct Game_Bitmap {
     BITMAPINFO bitmap_info;
     u8 buf[GAME_DRAWING_AREA_MEM_SIZE];
@@ -27,6 +20,26 @@ typedef struct Pixel32 {
     u8 red;
     u8 alpha;
 } Pixel32;
+
+typedef struct Monitor {
+    u32 top;
+    u32 left;
+    u32 right;
+    u32 bottom;
+
+    u32 width;
+    u32 height;
+
+    MONITORINFO monitor_info;
+} Monitor;
+
+LRESULT CALLBACK main_window_proc(HWND window, UINT msg, WPARAM w_param, LPARAM l_param);
+u32 create_main_game_window(_Out_ HWND *window,  HINSTANCE inst);
+BOOL instance_already_running(void);
+void ProcessPlayerInput(HWND window);
+void RenderFrame(HWND window);
+u32 get_monitor_info(Monitor *monitor, HWND window);
+u32 resize_main_game_window(HWND window, Monitor monitor);
 
 BOOL game_running = FALSE;
 Game_Bitmap back_buffer;
@@ -43,9 +56,14 @@ i32 WinMain(HINSTANCE inst, HINSTANCE prev_inst, PSTR cmd_line, INT cmd_show) {
         return 0;
     }
 
-    i32 monitor_width, monitor_height;
-    if (get_monitor_resolution(&monitor_width, &monitor_height, window)) {
-        MessageBoxA(NULL, "Could not figure out monitor resolution!", "Error", MB_ICONEXCLAMATION | MB_OK);
+    Monitor monitor;
+    if (get_monitor_info(&monitor, window) != ERROR_SUCCESS) {
+        MessageBoxA(NULL, "Could not figure out some monitor information!", "Error", MB_ICONEXCLAMATION | MB_OK);
+        return 0;
+    }
+
+    if (resize_main_game_window(window, monitor) != ERROR_SUCCESS) {
+        MessageBoxA(NULL, "Could not resize the window!", "Error", MB_ICONEXCLAMATION | MB_OK);
         return 0;
     }
 
@@ -84,6 +102,10 @@ LRESULT CALLBACK main_window_proc(HWND window, UINT msg, WPARAM w_param, LPARAM 
 } 
 
 u32 create_main_game_window(HWND *window, HINSTANCE inst) {
+    // Make sures we get the correct resolution of the screen, even when windows scaling is enabled 
+    // Microsoft recommeds not to use this function for copatibility reasons. But we are going to anyways
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
     WNDCLASSEXA window_class = {
         .cbSize = sizeof(WNDCLASSEXA),
         .style = 0,
@@ -101,7 +123,6 @@ u32 create_main_game_window(HWND *window, HINSTANCE inst) {
         CW_USEDEFAULT, CW_USEDEFAULT, 640, 480, NULL, NULL, inst, NULL);
     if (!*window) return GetLastError();
 
-    
     return ERROR_SUCCESS;
 }
 
@@ -125,12 +146,27 @@ void RenderFrame(HWND window) {
     ReleaseDC(window, device_context);
 }
 
-u32 get_monitor_resolution(i32 *monitor_width, i32 *monitor_height, HWND window) {
+u32 get_monitor_info(Monitor *monitor, HWND window) {
     MONITORINFO monitor_info = {sizeof(MONITORINFO)};
     if (!GetMonitorInfoA(MonitorFromWindow(window, MONITOR_DEFAULTTOPRIMARY), &monitor_info)) return ERROR_MONITOR_NO_DESCRIPTOR;
 
-    *monitor_width = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
-    *monitor_height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
+    monitor->monitor_info = monitor_info;
+    monitor->right = monitor_info.rcMonitor.right;
+    monitor->left = monitor_info.rcMonitor.left;
+    monitor->top = monitor_info.rcMonitor.top;
+    monitor->bottom = monitor_info.rcMonitor.bottom;
+    monitor->width = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
+    monitor->height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
+
+    return ERROR_SUCCESS;
+}
+
+u32 resize_main_game_window(HWND window, Monitor monitor) {
+    if (!SetWindowLongPtrA(window, GWL_STYLE, ((WS_OVERLAPPEDWINDOW | WS_VISIBLE) & ~WS_OVERLAPPEDWINDOW)))
+        return GetLastError();        
+
+    if (!SetWindowPos(window, HWND_TOPMOST, monitor.left, monitor.top, monitor.width, monitor.height, SWP_FRAMECHANGED))
+        return GetLastError();
 
     return ERROR_SUCCESS;
 }
