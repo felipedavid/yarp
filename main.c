@@ -112,7 +112,7 @@ u32 create_main_game_window(HWND *window, HINSTANCE inst) {
     };
     if (!RegisterClassExA(&window_class)) return GetLastError();
 
-    *window = CreateWindowExA(WS_EX_CLIENTEDGE, window_class.lpszClassName, GAME_NAME, (WS_OVERLAPPEDWINDOW | WS_VISIBLE), 
+    *window = CreateWindowExA(0, window_class.lpszClassName, GAME_NAME, (WS_OVERLAPPEDWINDOW | WS_VISIBLE), 
 			CW_USEDEFAULT, CW_USEDEFAULT, 640, 480, NULL, NULL, inst, NULL);
     if (!*window) return GetLastError();
 
