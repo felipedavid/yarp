@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <stdio.h>
 
 #include "defines.h"
 
@@ -7,6 +8,7 @@
 #define GAME_RES_HEIGHT 240
 #define GAME_BPP 32
 #define GAME_DRAWING_AREA_MEM_SIZE (GAME_RES_WIDTH * GAME_RES_HEIGHT * (GAME_BPP/8))
+#define TARGET_MS_PER_FRAME 16667
 
 typedef struct Game_Bitmap {
     BITMAPINFO bitmap_info;
@@ -27,16 +29,27 @@ typedef struct Monitor {
     MONITORINFO monitor_info;
 } Monitor;
 
-LRESULT CALLBACK main_window_proc(HWND window, UINT msg, WPARAM w_param, LPARAM l_param);
-u32 create_main_game_window(_Out_ HWND *window,  HINSTANCE inst);
-BOOL instance_already_running(void);
-void process_player_input(HWND window);
-void render_frame(HWND window, Monitor monitor);
-u32 get_monitor_info(Monitor *monitor, HWND window);
-u32 resize_main_game_window(HWND window, Monitor monitor);
+typedef struct Perf_Data {
+	u64 frames_rendered;
+	f32 fps_average; // Aiming to 60 fps
+	f32 raw_fps_average;
 
-BOOL game_running = FALSE;
+	i64 frequency;
+} Perf_Data;
+
+LRESULT CALLBACK main_window_proc(HWND window, UINT msg, WPARAM w_param, LPARAM l_param);
+u32 create_game_window(HINSTANCE inst);
+BOOL instance_already_running(void);
+void process_player_input(void);
+void render_frame(void);
+u32 get_monitor_info(void);
+u32 resize_game_window(void);
+
+Monitor monitor;
+HWND window;
 Game_Bitmap back_buffer;
+Perf_Data perf;
+BOOL game_running;
 
 i32 WinMain(HINSTANCE inst, HINSTANCE prev_inst, PSTR cmd_line, INT cmd_show) {
     if (instance_already_running()) { 
@@ -44,19 +57,17 @@ i32 WinMain(HINSTANCE inst, HINSTANCE prev_inst, PSTR cmd_line, INT cmd_show) {
         return 0;
     }
 
-    HWND window;
-    if (create_main_game_window(&window, inst) != ERROR_SUCCESS) {
+    if (create_game_window(inst) != ERROR_SUCCESS) {
         MessageBoxA(NULL, "Window registration failed!", "Error", MB_ICONEXCLAMATION | MB_OK);
         return 0;
     }
 
-    Monitor monitor;
-    if (get_monitor_info(&monitor, window) != ERROR_SUCCESS) {
+    if (get_monitor_info() != ERROR_SUCCESS) {
         MessageBoxA(NULL, "Could not figure out some monitor information!", "Error", MB_ICONEXCLAMATION | MB_OK);
         return 0;
     }
 
-    if (resize_main_game_window(window, monitor) != ERROR_SUCCESS) {
+    if (resize_game_window() != ERROR_SUCCESS) {
         MessageBoxA(NULL, "Could not resize the window!", "Error", MB_ICONEXCLAMATION | MB_OK);
         return 0;
     }
@@ -69,14 +80,49 @@ i32 WinMain(HINSTANCE inst, HINSTANCE prev_inst, PSTR cmd_line, INT cmd_show) {
         .biCompression = BI_RGB,
         .biPlanes = 1,
     };
+
+	QueryPerformanceFrequency((LARGE_INTEGER *)&perf.frequency);
     
     game_running = TRUE;
     MSG msg;
+	i64 frame_start, frame_end;
+	i64 ms_per_frame, ms_per_frame_acc_raw = 0, ms_per_frame_acc_cooked = 0;
     while (game_running) {
+		QueryPerformanceCounter((LARGE_INTEGER *)&frame_start);
+
         while (PeekMessageA(&msg, window, 0, 0, PM_REMOVE)) DispatchMessage(&msg);
-        process_player_input(window);
-        render_frame(window, monitor);
-        Sleep(1);
+        process_player_input();
+        render_frame();
+
+		QueryPerformanceCounter((LARGE_INTEGER *)&frame_end);
+		ms_per_frame = frame_end - frame_start;
+		ms_per_frame *= 1000000;
+		ms_per_frame /= perf.frequency;
+		perf.frames_rendered++;
+		ms_per_frame_acc_raw += ms_per_frame;	
+
+		while (ms_per_frame <= TARGET_MS_PER_FRAME) {
+			Sleep(0);
+			ms_per_frame = frame_end - frame_start;
+			ms_per_frame *= 1000000;
+			ms_per_frame /= perf.frequency;
+			QueryPerformanceCounter((LARGE_INTEGER *)&frame_end);
+		}
+		ms_per_frame_acc_cooked += ms_per_frame;	
+
+		if ((perf.frames_rendered % 100) == 0) {
+			i64 avg_ms_per_frame_raw = ms_per_frame_acc_raw / 100;
+			i64 avg_ms_per_frame_cooked = ms_per_frame_acc_cooked / 100;
+			perf.fps_average = 1.0f / ((ms_per_frame_acc_cooked / 60) * 0.000001f);
+			perf.raw_fps_average = 1.0f / ((ms_per_frame_acc_raw / 60) * 0.000001f);
+
+			char buf[512];
+			sprintf(buf, "Avg milliseconds/frame raw: %lld\tAvg FPS Cooked: %.01f\tAvg FPS Raw: %0.01f\n", avg_ms_per_frame_raw, perf.fps_average, perf.raw_fps_average);
+			OutputDebugStringA(buf);
+
+			ms_per_frame_acc_raw = 0;
+			ms_per_frame_acc_cooked = 0;
+		}
     }
 
     return 0;
@@ -94,7 +140,7 @@ LRESULT CALLBACK main_window_proc(HWND window, UINT msg, WPARAM w_param, LPARAM 
     return 0; 
 } 
 
-u32 create_main_game_window(HWND *window, HINSTANCE inst) {
+u32 create_game_window(HINSTANCE inst) {
     // Make sures we get the correct resolution of the screen, even when windows scaling is enabled 
     // Microsoft recommeds not to use this function for copatibility reasons. But we are going to anyways
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -112,9 +158,9 @@ u32 create_main_game_window(HWND *window, HINSTANCE inst) {
     };
     if (!RegisterClassExA(&window_class)) return GetLastError();
 
-    *window = CreateWindowExA(0, window_class.lpszClassName, GAME_NAME, (WS_OVERLAPPEDWINDOW | WS_VISIBLE), 
+    window = CreateWindowExA(0, window_class.lpszClassName, GAME_NAME, (WS_OVERLAPPEDWINDOW | WS_VISIBLE), 
 			CW_USEDEFAULT, CW_USEDEFAULT, 640, 480, NULL, NULL, inst, NULL);
-    if (!*window) return GetLastError();
+    if (!window) return GetLastError();
 
     return ERROR_SUCCESS;
 }
@@ -125,16 +171,20 @@ BOOL instance_already_running(void) {
     return GetLastError() == ERROR_ALREADY_EXISTS;
 }
 
-void process_player_input(HWND window) {
-    if (GetAsyncKeyState(VK_ESCAPE)) {
+inline void process_player_input(void) {
+#define Q_KEY_CODE 0x51
+    if (GetAsyncKeyState(Q_KEY_CODE)) {
         SendMessageA(window, WM_CLOSE, 0, 0);
     }
 }
 
-void render_frame(HWND window, Monitor monitor) {
-	Pixel32 color = 0xff;
-	for (int i = 0; i < GAME_DRAWING_AREA_MEM_SIZE; i += 4) {
-		*(u32*)(back_buffer.buf+i) = color;
+inline void render_frame(void) {
+	// Runs through every pixel in our back buffer and sets it to blue color 
+	Pixel32 color = 0x7f;
+	Pixel32 *pixel_ptr = (Pixel32 *) back_buffer.buf;
+	void *buf_end = back_buffer.buf + GAME_DRAWING_AREA_MEM_SIZE;
+	while (pixel_ptr < buf_end) {
+		*pixel_ptr++ = color;
 	}
 
     HDC device_context = GetDC(window);
@@ -145,22 +195,23 @@ void render_frame(HWND window, Monitor monitor) {
     ReleaseDC(window, device_context);
 }
 
-u32 get_monitor_info(Monitor *monitor, HWND window) {
+u32 get_monitor_info(void) {
     MONITORINFO monitor_info = {sizeof(MONITORINFO)};
-    if (!GetMonitorInfoA(MonitorFromWindow(window, MONITOR_DEFAULTTOPRIMARY), &monitor_info)) return ERROR_MONITOR_NO_DESCRIPTOR;
+    if (!GetMonitorInfoA(MonitorFromWindow(window, MONITOR_DEFAULTTOPRIMARY), &monitor_info)) 
+		return ERROR_MONITOR_NO_DESCRIPTOR;
 
-    monitor->monitor_info = monitor_info;
-    monitor->right = monitor_info.rcMonitor.right;
-    monitor->left = monitor_info.rcMonitor.left;
-    monitor->top = monitor_info.rcMonitor.top;
-    monitor->bottom = monitor_info.rcMonitor.bottom;
-    monitor->width = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
-    monitor->height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
+    monitor.monitor_info = monitor_info;
+    monitor.right = monitor_info.rcMonitor.right;
+    monitor.left = monitor_info.rcMonitor.left;
+    monitor.top = monitor_info.rcMonitor.top;
+    monitor.bottom = monitor_info.rcMonitor.bottom;
+    monitor.width = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
+    monitor.height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
 
     return ERROR_SUCCESS;
 }
 
-u32 resize_main_game_window(HWND window, Monitor monitor) {
+u32 resize_game_window(void) {
     if (!SetWindowLongPtrA(window, GWL_STYLE, ((WS_OVERLAPPEDWINDOW | WS_VISIBLE) & ~WS_OVERLAPPEDWINDOW)))
         return GetLastError();        
 
